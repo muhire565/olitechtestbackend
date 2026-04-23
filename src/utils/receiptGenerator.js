@@ -2,11 +2,12 @@ const { format } = require("date-fns");
 
 const buildReceipt = ({ sale, items, payments, settings, cashierName, changeDue = 0 }) => {
   const createdAt = new Date(sale.created_at);
+  const safeSettings = settings || {};
   return {
     receipt_number: sale.receipt_number,
-    store_name: settings.store_name,
-    store_address: settings.store_address,
-    store_phone: settings.store_phone,
+    store_name: safeSettings.store_name || "Supermarket",
+    store_address: safeSettings.store_address || "Kimironko",
+    store_phone: safeSettings.store_phone || "+250788763374",
     date: format(createdAt, "yyyy-MM-dd"),
     time: format(createdAt, "HH:mm:ss"),
     cashier_name: cashierName,
@@ -22,7 +23,7 @@ const buildReceipt = ({ sale, items, payments, settings, cashierName, changeDue 
     total: Number(sale.total_amount),
     payments: payments.map((p) => ({ method: p.method, amount: Number(p.amount) })),
     change_due: Number(changeDue),
-    receipt_footer: settings.receipt_footer,
+    receipt_footer: safeSettings.receipt_footer || "Thank you for shopping with us.",
     currency: "RWF",
   };
 };

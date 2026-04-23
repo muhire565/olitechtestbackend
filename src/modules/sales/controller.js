@@ -123,9 +123,22 @@ const createSale = async (req, res, next) => {
     const fullPayments = fullPaymentsRes.data || [];
     const settings = settingsRes.data;
 
-    const cashPaid   = fullPayments.filter((p) => p.method === "CASH").reduce((a, p) => a + Number(p.amount), 0);
+    const cashPaid = fullPayments.filter((p) => p.method === "CASH").reduce((a, p) => a + Number(p.amount), 0);
     const change_due = Math.max(0, cashPaid - netTotal);
-    const receipt    = buildReceipt({ sale, items: fullItems, payments: fullPayments, settings, cashierName: req.user.full_name, changeDue: change_due });
+    let receipt = null;
+    try {
+      receipt = buildReceipt({
+        sale,
+        items: fullItems,
+        payments: fullPayments,
+        settings,
+        cashierName: req.user.full_name,
+        changeDue: change_due,
+      });
+    } catch (receiptErr) {
+      // Sale is already committed; receipt formatting must not fail checkout.
+      console.error("Receipt generation failed after sale create:", receiptErr?.message || receiptErr);
+    }
 
     broadcastRealtime({
       type: "sales_updated",
