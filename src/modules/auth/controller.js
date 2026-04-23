@@ -47,7 +47,7 @@ const login = async (req, res, next) => {
       token: data.session.access_token, 
       refresh_token: data.session.refresh_token, 
       role: profile?.role, 
-      user: profile 
+      user: { ...profile, email: data.user.email } 
     });
   } catch (e) { next(e); }
 };
@@ -69,8 +69,34 @@ const me = async (req, res, next) => {
   try {
     const { data, error } = await supabase.from("profiles").select("*").eq("id", req.user.id).single();
     if (error) throw fail(error.message, 400);
-    return ok(res, data);
+    return ok(res, { ...data, email: req.user.email });
   } catch (e) { next(e); }
 };
 
-module.exports = { login, logout, refresh, me };
+const updateCredentials = async (req, res, next) => {
+  try {
+    const username = String(req.body.username || "").trim().toLowerCase();
+    const currentPassword = String(req.body.current_password || "");
+    const newPassword = String(req.body.new_password || "");
+
+    if (!username && !newPassword) throw fail("Provide a new username and/or a new password.", 400);
+
+    // Verify current password before allowing account credential changes.
+    const verify = await supabase.auth.signInWithPassword({
+      email: req.user.email,
+      password: currentPassword,
+    });
+    if (verify.error || !verify.data?.session) throw fail("Current password is incorrect.", 401);
+
+    const updatePayload = {};
+    if (username) updatePayload.email = username;
+    if (newPassword) updatePayload.password = newPassword;
+
+    const { data, error } = await supabase.auth.admin.updateUserById(req.user.id, updatePayload);
+    if (error) throw fail(error.message, 400);
+
+    return ok(res, { username: data?.user?.email || updatePayload.email || req.user.email }, "Credentials updated");
+  } catch (e) { next(e); }
+};
+
+module.exports = { login, logout, refresh, me, updateCredentials };
