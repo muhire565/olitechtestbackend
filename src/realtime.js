@@ -9,7 +9,8 @@ const initRealtime = (server) => {
   server.on("upgrade", (request, socket, head) => {
     const rawUrl = String(request.url || "");
     const pathname = rawUrl.split("?")[0];
-    if (pathname !== "/ws" && pathname !== "/api/ws") {
+    const isWsPath = /^\/(?:api\/)?ws\/?$/.test(pathname);
+    if (!isWsPath) {
       socket.destroy();
       return;
     }
