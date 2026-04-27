@@ -3,6 +3,7 @@ const { body } = require("express-validator");
 const auth = require("../../middleware/auth");
 const { validate } = require("../../utils/http");
 const controller = require("./controller");
+const { listLoginLogs } = require("./loginLogs");
 
 const router = express.Router();
 
@@ -23,5 +24,8 @@ router.patch(
     controller.updateCredentials(req, res, next);
   }
 );
+
+// Developer: login activity log
+router.get("/login-logs", auth, listLoginLogs);
 
 module.exports = router;

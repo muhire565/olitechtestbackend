@@ -58,6 +58,14 @@ const login = async (req, res, next) => {
       throw fail("Profile not found for this user.", 403);
     }
     
+    // Fire-and-forget: log the successful login (non-blocking)
+    supabase.from("login_logs").insert({
+      user_id: data.user.id,
+      logged_in_at: new Date().toISOString(),
+      ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket?.remoteAddress || null,
+      user_agent: req.headers["user-agent"] || null,
+    }).then(() => {}).catch(() => {});
+
     return ok(res, { 
       token: data.session.access_token, 
       refresh_token: data.session.refresh_token, 

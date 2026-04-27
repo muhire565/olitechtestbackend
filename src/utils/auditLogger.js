@@ -5,7 +5,7 @@ const auditLogger = async ({
   action,
   entity_type,
   entity_id,
-  details = {},
+  details = {}, 
   ip_address,
 }) => {
   await supabase.from("audit_logs").insert([
