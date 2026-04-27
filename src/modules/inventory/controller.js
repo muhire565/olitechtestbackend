@@ -20,15 +20,18 @@ const list = async (req, res, next) => {
 
     if (err2) throw fail(err2.message);
 
+    const { data: sett } = await supabase.from("settings").select("default_low_stock_threshold").eq("id", 1).single();
+    const defaultThreshold = Number(sett?.default_low_stock_threshold ?? 10);
+
     let low_stock = 0;
     let out_of_stock = 0;
     for (const row of allRows || []) {
       const prod = row.products;
       const thrRaw = Array.isArray(prod) ? prod[0]?.low_stock_threshold : prod?.low_stock_threshold;
-      const thr = Number(thrRaw ?? 10);
+      const thr = thrRaw === null || thrRaw === undefined ? defaultThreshold : Number(thrRaw);
       const q = Number(row.quantity_in_stock || 0);
       if (q <= 0) out_of_stock += 1;
-      else if (q < thr) low_stock += 1;
+      else if (q <= thr) low_stock += 1; // Fixed: using <= to match other modules
     }
 
     return res.json({

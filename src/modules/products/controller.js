@@ -92,16 +92,28 @@ const updatePrice = async (req, res, next) => update(req, res, next);
 const deactivate = async (req, res, next) => { req.body = { is_active: false }; return update(req, res, next); };
 const lowStock = async (req, res, next) => {
   try {
-    const { data, error } = await supabase
-      .from("products")
-      .select("*, categories(name), inventory(quantity_in_stock)")
-      .order("name", { ascending: true });
-    if (error) throw fail(error.message);
-    const out = (data || []).filter((p) => {
+    const [settingsRes, productsRes] = await Promise.all([
+      supabase.from("settings").select("default_low_stock_threshold").eq("id", 1).single(),
+      supabase
+        .from("products")
+        .select("*, categories(name), inventory(quantity_in_stock)")
+        .eq("is_active", true)
+        .order("name", { ascending: true })
+    ]);
+
+    if (productsRes.error) throw fail(productsRes.error.message);
+    
+    const defaultThreshold = Number(settingsRes.data?.default_low_stock_threshold ?? 10);
+    const data = productsRes.data || [];
+
+    const out = data.filter((p) => {
       const qty = quantityFromInventoryEmbed(p.inventory);
-      const threshold = Number(p.low_stock_threshold || 0);
+      const threshold = p.low_stock_threshold === null || p.low_stock_threshold === undefined 
+        ? defaultThreshold 
+        : Number(p.low_stock_threshold);
       return qty <= threshold;
     });
+
     return ok(res, out);
   } catch (e) {
     next(e);

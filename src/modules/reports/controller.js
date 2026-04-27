@@ -369,15 +369,13 @@ const dashboardSummary = async (req, res, next) => {
       })(),
       supabase
         .from("products")
-        .select("id, name, buying_price, is_package, package_size, package_buying_price, low_stock_threshold, inventory(quantity_in_stock)"),
-      supabase.from("products").select("id, low_stock_threshold, inventory(quantity_in_stock)"),
+        .select("id, name, buying_price, is_package, package_size, package_buying_price, low_stock_threshold, is_active, inventory(quantity_in_stock)"),
     ]);
 
     if (payRowsRes.error) throw fail(payRowsRes.error.message);
     if (profitRowsRes.error) throw fail(profitRowsRes.error.message);
     if (expenseRowsRes.error) throw fail(expenseRowsRes.error.message);
     if (stockRowsRes.error) throw fail(stockRowsRes.error.message);
-    if (lowStockRes.error) throw fail(lowStockRes.error.message);
 
     const paymentData = (payRowsRes.data || []).reduce(
       (acc, p) => ({ ...acc, [p.method]: Number(acc[p.method] || 0) + Number(p.amount || 0) }),
@@ -398,10 +396,16 @@ const dashboardSummary = async (req, res, next) => {
       const unitCost = stockUnitCost(p);
       return acc + qty * unitCost;
     }, 0);
-    const lowRows = lowStockRes.data || [];
-    const lowCount = lowRows.filter((p) => {
+    const { data: s } = await supabase.from("settings").select("default_low_stock_threshold").eq("id", 1).single();
+    const defaultThreshold = Number(s?.default_low_stock_threshold ?? 10);
+    
+    const lowCount = stockRows.filter((p) => {
+      if (p.is_active === false) return false;
       const qty = quantityFromInventoryEmbed(p.inventory);
-      return qty <= Number(p.low_stock_threshold || 0);
+      const thr = p.low_stock_threshold === null || p.low_stock_threshold === undefined
+        ? defaultThreshold
+        : Number(p.low_stock_threshold);
+      return qty <= thr;
     }).length;
 
     return ok(res, {
@@ -415,6 +419,7 @@ const dashboardSummary = async (req, res, next) => {
       expenses: expenseData,
       stock: { total_value: Number(totalStockValue || 0) },
       low_stock_count: lowCount,
+      default_low_stock_threshold: defaultThreshold,
     });
   } catch (e) {
     next(e);
