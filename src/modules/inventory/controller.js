@@ -12,8 +12,7 @@ const list = async (req, res, next) => {
 
     let q = supabase
       .from("products")
-      .select("*, inventory(id, quantity_in_stock, last_updated)", { count: "exact" })
-      .eq("is_active", true);
+      .select("*, inventory(id, quantity_in_stock, last_updated)", { count: "exact" });
 
     if (search) {
       const term = String(search).trim().replace(/[,%()]/g, " ");
