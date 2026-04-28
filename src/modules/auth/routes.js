@@ -3,7 +3,7 @@ const { body } = require("express-validator");
 const auth = require("../../middleware/auth");
 const { validate } = require("../../utils/http");
 const controller = require("./controller");
-const { listLoginLogs } = require("./loginLogs");
+const { listLoginLogs, deleteLoginLog, clearAllLoginLogs } = require("./loginLogs");
 
 const router = express.Router();
 
@@ -27,5 +27,7 @@ router.patch(
 
 // Developer: login activity log
 router.get("/login-logs", auth, listLoginLogs);
+router.delete("/login-logs/all", auth, clearAllLoginLogs);
+router.delete("/login-logs/:id", auth, deleteLoginLog);
 
 module.exports = router;

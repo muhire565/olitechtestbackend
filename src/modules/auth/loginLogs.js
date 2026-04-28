@@ -21,6 +21,28 @@ const listLoginLogs = async (req, res, next) => {
   } catch (e) {
     next(e);
   }
+/** Developer: delete a specific login log */
+const deleteLoginLog = async (req, res, next) => {
+  try {
+    if (req.user.role !== "developer") throw fail("Forbidden", 403);
+    const { error } = await supabase.from("login_logs").delete().eq("id", req.params.id);
+    if (error) throw fail(error.message);
+    return ok(res, {}, "Log entry deleted");
+  } catch (e) {
+    next(e);
+  }
 };
 
-module.exports = { listLoginLogs };
+/** Developer: clear all login logs */
+const clearAllLoginLogs = async (req, res, next) => {
+  try {
+    if (req.user.role !== "developer") throw fail("Forbidden", 403);
+    const { error } = await supabase.from("login_logs").delete().neq("id", "00000000-0000-0000-0000-000000000000"); // Delete all
+    if (error) throw fail(error.message);
+    return ok(res, {}, "All login logs cleared");
+  } catch (e) {
+    next(e);
+  }
+};
+
+module.exports = { listLoginLogs, deleteLoginLog, clearAllLoginLogs };
