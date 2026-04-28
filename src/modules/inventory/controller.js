@@ -8,9 +8,18 @@ const list = async (req, res, next) => {
     const limit = Number(req.query.limit || 20);
     const from = (page - 1) * limit;
 
-    const { data, count, error } = await supabase
+    const search = req.query.search;
+
+    let q = supabase
       .from("inventory")
-      .select("*, products(*)", { count: "exact" })
+      .select("*, products!inner(*)", { count: "exact" });
+
+    if (search) {
+      const term = String(search).trim().replace(/[,%()]/g, " ");
+      q = q.or(`name.ilike.*${term}*,barcode.ilike.*${term}*`, { foreignTable: "products" });
+    }
+
+    const { data, count, error } = await q
       .range(from, from + limit - 1);
 
     if (error) throw fail(error.message);
