@@ -1,6 +1,7 @@
 const { supabase } = require("../../config/supabase");
 const { ok, fail } = require("../../utils/http");
 const { broadcastRealtime } = require("../../realtime");
+const { quantityFromInventoryEmbed } = require("../../utils/inventoryEmbed");
 
 const list = async (req, res, next) => {
   try {
@@ -8,18 +9,19 @@ const list = async (req, res, next) => {
     const limit = Number(req.query.limit || 20);
     const from = (page - 1) * limit;
     const search = req.query.search;
-    let selectStr = search ? "*, products!inner(*)" : "*, products(*)";
+
     let q = supabase
-      .from("inventory")
-      .select(selectStr, { count: "exact" });
+      .from("products")
+      .select("*, inventory(id, quantity_in_stock, last_updated)", { count: "exact" })
+      .eq("is_active", true);
 
     if (search) {
       const term = String(search).trim().replace(/[,%()]/g, " ");
-      q = q.or(`name.ilike.*${term}*,barcode.ilike.*${term}*`, { foreignTable: "products" });
+      q = q.or(`name.ilike.*${term}*,barcode.ilike.*${term}*`);
     }
 
-    const { data, count, error } = await q
-      .order("product_id", { ascending: true })
+    const { data: products, count, error } = await q
+      .order("name", { ascending: true })
       .range(from, from + limit - 1);
 
     if (error) {
@@ -27,10 +29,26 @@ const list = async (req, res, next) => {
       throw fail(error.message);
     }
 
-    // Summary calculation (can stay as is or be optimized)
+    // Map to inventory-style structure
+    const data = (products || []).map(p => {
+      const inv = Array.isArray(p.inventory) ? p.inventory[0] : p.inventory;
+      return {
+        id: inv?.id || `inv-${p.id}`,
+        product_id: p.id,
+        quantity_in_stock: quantityFromInventoryEmbed(p.inventory),
+        last_updated: inv?.last_updated || p.updated_at || p.created_at,
+        products: {
+          name: p.name,
+          barcode: p.barcode,
+          low_stock_threshold: p.low_stock_threshold
+        }
+      };
+    });
+
+    // Summary calculation
     const { data: allRows, error: err2 } = await supabase
       .from("inventory")
-      .select("quantity_in_stock, products(low_stock_threshold)");
+      .select("quantity_in_stock, products!inner(low_stock_threshold)");
 
     if (err2) throw fail(err2.message);
 
