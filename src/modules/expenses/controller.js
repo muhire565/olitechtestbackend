@@ -26,15 +26,33 @@ const list = async (req, res, next) => {
   }
 };
 
+const { expectedCashFor } = require("../eod/controller");
+
 const create = async (req, res, next) => {
   try {
+    const payment_method = String(req.body.payment_method || "CASH").toUpperCase();
+    const amount = Number(req.body.amount);
+    const expense_date = req.body.expense_date || new Date().toISOString().slice(0, 10);
+    const created_by = req.user.id;
+
+    // Strict Cash Validation: Check if there's enough cash in the drawer
+    if (payment_method === "CASH") {
+      const { expected_cash } = await expectedCashFor(created_by, expense_date);
+      if (amount > expected_cash) {
+        throw fail(
+          `Insufficient cash in drawer. Available cash: ${expected_cash.toLocaleString()} RWF. You cannot spend more than what you have.`, 
+          400
+        );
+      }
+    }
+
     const payload = {
       description: String(req.body.description || "").trim(),
       category: String(req.body.category || "Operations").trim(),
-      amount: Number(req.body.amount),
-      expense_date: req.body.expense_date || new Date().toISOString().slice(0, 10),
-      created_by: req.user.id,
-      payment_method: String(req.body.payment_method || "CASH").toUpperCase(),
+      amount,
+      expense_date,
+      created_by,
+      payment_method,
     };
     const { data, error } = await supabase.from("expenses").insert([payload]).select().single();
     if (error) throw fail(error.message);

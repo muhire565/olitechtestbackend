@@ -82,7 +82,7 @@ const submit = async (req, res, next) => {
     const discrepancy = Number(counted_cash) - expected_cash;
     
     // Combine auto-generated notes with user justification
-    let systemNotes = "No problem";
+    let systemNotes = "Perfect Match (No Discrepancy)";
     if (discrepancy < 0) systemNotes = `Shortage ${Math.abs(discrepancy)}`;
     else if (discrepancy > 0) systemNotes = `Excess ${discrepancy}`;
 
@@ -125,8 +125,17 @@ const submit = async (req, res, next) => {
       severity = "warning";
     }
 
+    // Delete any existing notification for this shift to avoid duplicates
+    const searchTitle = `EOD Settlement: ${cashierName}`;
+    const searchBodyPart = `Shift settlement for ${date}`;
+    await supabase
+      .from("payment_notifications")
+      .delete()
+      .eq("title", searchTitle)
+      .like("body", `%${searchBodyPart}%`);
+
     await supabase.from("payment_notifications").insert({
-      title: `EOD Settlement: ${cashierName}`,
+      title: searchTitle,
       body: `Shift settlement for ${date}: ${statusText}.`,
       severity,
       created_by: cashier_id,
@@ -261,12 +270,35 @@ const report = async (req, res, next) => {
 
 const remove = async (req, res, next) => {
   try {
-    const { error } = await supabase.from("eod_sessions").delete().eq("id", req.params.id);
+    const { data, error } = await supabase.from("eod_sessions").delete().eq("id", req.params.id).select("*, profiles(full_name)").single();
     if (error) throw fail(error.message);
-    return ok(res, { id: req.params.id, deleted: true });
+
+    // Also delete associated notifications
+    const cashierName = data?.profiles?.full_name || "Unknown Cashier";
+    const searchTitle = `EOD Settlement: ${cashierName}`;
+    const searchBodyPart = `Shift settlement for ${data.date}`;
+
+    await supabase
+      .from("payment_notifications")
+      .delete()
+      .eq("title", searchTitle)
+      .like("body", `%${searchBodyPart}%`);
+
+    return ok(res, data);
   } catch (e) {
     next(e);
   }
 };
 
-module.exports = { submit, preview, list, getOne, approve, flag, report, remove, setOpeningBalance };
+module.exports = { 
+  setOpeningBalance, 
+  submit, 
+  preview, 
+  list, 
+  getOne, 
+  approve, 
+  flag, 
+  report, 
+  remove,
+  expectedCashFor
+};
