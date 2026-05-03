@@ -52,7 +52,7 @@ const setOpeningBalance = async (req, res, next) => {
           opening_balance: Number(amount || 0), 
           expected_cash: 0, 
           counted_cash: 0,
-          notes: "OPENING_BALANCE_ONLY"
+          submitted_at: null
         },
         { onConflict: "cashier_id,date" }
       )
@@ -94,6 +94,7 @@ const submit = async (req, res, next) => {
           expected_cash, 
           status,
           notes,
+          submitted_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         },
         { onConflict: "cashier_id,date" }
@@ -115,13 +116,14 @@ const preview = async (req, res, next) => {
     const totals = await expectedCashFor(cashier_id, date);
     const { data: existing, error: existingErr } = await supabase
       .from("eod_sessions")
-      .select("id, counted_cash, status, created_at")
+      .select("id, counted_cash, status, created_at, submitted_at")
       .eq("cashier_id", cashier_id)
       .eq("date", date)
       .maybeSingle();
     if (existingErr) throw fail(existingErr.message);
     
-    const isSubmitted = existing && existing.notes !== "OPENING_BALANCE_ONLY";
+    // A session is considered submitted only if submitted_at is set.
+    const isSubmitted = !!(existing && existing.submitted_at);
     
     return ok(res, { ...totals, already_submitted: isSubmitted, existing });
   } catch (e) {
