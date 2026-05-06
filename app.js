@@ -22,6 +22,7 @@ const eodRoutes = require("./src/modules/eod/routes");
 const notificationRoutes = require("./src/modules/notifications/routes");
 const expensesRoutes = require("./src/modules/expenses/routes");
 const paymentNotificationsRoutes = require("./src/modules/payment_notifications/routes");
+const chatRoutes = require("./src/modules/chat/routes");
 
 const app = express();
 app.use(cors());
@@ -46,6 +47,7 @@ app.use("/api/eod", auth, eodRoutes);
 app.use("/api/notifications", auth, notificationRoutes);
 app.use("/api/expenses", auth, expensesRoutes);
 app.use("/api/payment-notifications", auth, paymentNotificationsRoutes);
+app.use("/api/chat", auth, chatRoutes);
 
 app.use((req, res) => res.status(404).json({ success: false, error: "Not found", code: 404 }));
 app.use(errorHandler);
