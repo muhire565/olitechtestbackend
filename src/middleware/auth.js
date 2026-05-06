@@ -24,6 +24,8 @@ const authMiddleware = async (req, res, next) => {
     // This is the part that was timing out due to network latency
     const { data: userData, error: userErr } = await supabase.auth.getUser(token);
     if (userErr || !userData?.user) {
+      console.error(`[Auth] Token validation failed for ${token.substring(0, 10)}...:`, userErr?.message);
+      
       // If we have an expired cache but Supabase is timed out/down, 
       // we might want to "gracefully" let them continue for a bit longer
       // But for security, we'll follow standard protocol unless it's a timeout

@@ -118,7 +118,10 @@ const forceLogout = async (req, res, next) => {
 
     // Call Supabase admin sign out
     const { error: signOutErr } = await supabase.auth.admin.signOut(id);
-    if (signOutErr) throw fail(signOutErr.message);
+    if (signOutErr) {
+      console.error(`[Admin] Force logout failed for user ${id}:`, signOutErr);
+      throw fail(signOutErr.message);
+    }
 
     // Add to audit logs
     await supabase.from("account_audit_logs").insert({
