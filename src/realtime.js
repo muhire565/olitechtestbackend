@@ -108,6 +108,23 @@ const initRealtime = (server) => {
     console.log(`[Presence] ${socket.user.username} joined. Active users: ${onlineUsers.size}`);
     io.emit("presence:sync", Array.from(onlineUsers.values()));
 
+    // Persist to DB for API consistency
+    supabase
+      .from("user_presence")
+      .upsert({ 
+        user_id: userId, 
+        is_online: true, 
+        last_seen: new Date().toISOString() 
+      })
+      .then(() => {
+        // Broadcast to everyone using the canonical event name
+        broadcastRealtime({ 
+          type: "presence_updated", 
+          data: { user_id: userId, is_online: true, last_seen: new Date().toISOString() } 
+        });
+      })
+      .catch(err => console.error("[Realtime] DB Presence Update Error:", err.message));
+
     // Join rooms based on role
     socket.join("notifications");
     socket.join(`user:${userId}`); // Personal room for targeted events like typing
@@ -135,16 +152,32 @@ const initRealtime = (server) => {
       }
     });
 
-    socket.on("disconnect", (reason) => {
+    socket.on("disconnect", () => {
       clearInterval(heartbeat);
-      const user = onlineUsers.get(userId);
-      if (user) {
-        user.count--;
-        if (user.count <= 0) {
+      const existing = onlineUsers.get(userId);
+      if (existing) {
+        existing.count--;
+        if (existing.count <= 0) {
           onlineUsers.delete(userId);
+          console.log(`[Presence] ${socket.user.username} left. Active users: ${onlineUsers.size}`);
+          
+          // Persist to DB
+          supabase
+            .from("user_presence")
+            .upsert({ 
+              user_id: userId, 
+              is_online: false, 
+              last_seen: new Date().toISOString() 
+            })
+            .then(() => {
+              broadcastRealtime({ 
+                type: "presence_updated", 
+                data: { user_id: userId, is_online: false, last_seen: new Date().toISOString() } 
+              });
+            })
+            .catch(err => console.error("[Realtime] DB Presence Disconnect Error:", err.message));
         }
       }
-      console.log(`[Presence] ${socket.user.username} left. Active users: ${onlineUsers.size}`);
       io.emit("presence:sync", Array.from(onlineUsers.values()));
     });
 
