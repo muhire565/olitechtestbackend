@@ -56,7 +56,8 @@ const create = async (req, res, next) => {
     };
     const { data, error } = await supabase.from("expenses").insert([payload]).select().single();
     if (error) throw fail(error.message);
-    broadcastRealtime({ type: "expenses_updated", event: "expense_created", expense_id: data.id, amount: data.amount });
+    broadcastRealtime({ type: "expense:new", expense_id: data.id, amount: data.amount });
+    broadcastRealtime({ type: "dashboard:refresh" });
     return ok(res, data, "Expense added");
   } catch (e) {
     next(e);
@@ -67,7 +68,8 @@ const remove = async (req, res, next) => {
   try {
     const { data, error } = await supabase.from("expenses").delete().eq("id", req.params.id).select().single();
     if (error) throw fail(error.message);
-    broadcastRealtime({ type: "expenses_updated", event: "expense_deleted", expense_id: data.id, amount: data.amount });
+    broadcastRealtime({ type: "expense:new", expense_id: data.id, amount: data.amount, event: "deleted" });
+    broadcastRealtime({ type: "dashboard:refresh" });
     return ok(res, data, "Expense removed");
   } catch (e) {
     next(e);

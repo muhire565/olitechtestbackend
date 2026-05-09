@@ -51,8 +51,7 @@ const setOpeningBalance = async (req, res, next) => {
           date, 
           opening_balance: Number(amount || 0), 
           expected_cash: 0, 
-          counted_cash: 0,
-          submitted_at: null
+          counted_cash: 0
         },
         { onConflict: "cashier_id,date" }
       )
@@ -102,7 +101,6 @@ const submit = async (req, res, next) => {
           expected_cash, 
           status,
           notes,
-          submitted_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         },
         { onConflict: "cashier_id,date" }
@@ -143,8 +141,9 @@ const submit = async (req, res, next) => {
     });
 
     const { broadcastRealtime } = require("../../realtime");
+    broadcastRealtime({ type: "eod:submitted", cashier_id, date });
     broadcastRealtime({ type: "payment_notifs_updated", event: "created" });
-    broadcastRealtime({ type: "dashboard_refresh" });
+    broadcastRealtime({ type: "dashboard:refresh" });
 
     return ok(res, data);
   } catch (e) {
@@ -165,8 +164,8 @@ const preview = async (req, res, next) => {
       .maybeSingle();
     if (existingErr) throw fail(existingErr.message);
     
-    // A session is considered submitted only if submitted_at is set.
-    const isSubmitted = !!(existing && existing.submitted_at);
+    // A session is considered submitted if it has a status other than "pending" (or if counted_cash is set)
+    const isSubmitted = !!(existing && (existing.status !== "pending" || Number(existing.counted_cash) > 0));
     
     return ok(res, { ...totals, already_submitted: isSubmitted, existing });
   } catch (e) {
@@ -181,7 +180,7 @@ const list = async (req, res, next) => {
     const { data, count, error } = await supabase
       .from("eod_sessions")
       .select("*, profiles!eod_sessions_cashier_id_fkey(full_name)", { count: "exact" })
-      .not("submitted_at", "is", null)
+      .or("status.neq.pending,counted_cash.gt.0") // Resilient filter: either approved/flagged OR has counted cash
       .order("date", { ascending: false })
       .order("created_at", { ascending: false })
       .range(from, from + limit - 1);

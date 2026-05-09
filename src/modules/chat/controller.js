@@ -61,16 +61,38 @@ exports.getMessages = async (req, res, next) => {
     const { id: currentUserId } = req.user;
     const { contactId } = req.params;
 
-    const { data: messages, error } = await supabase
+    if (!contactId) {
+      return res.status(400).json({ success: false, error: "Missing contactId" });
+    }
+
+    const limit = Math.min(Number(req.query.limit) || 30, 100);
+    const before = req.query.before; // ISO timestamp cursor
+
+    let q = supabase
       .from("messages")
       .select("*")
       .or(`and(sender_id.eq.${currentUserId},receiver_id.eq.${contactId}),and(sender_id.eq.${contactId},receiver_id.eq.${currentUserId})`)
-      .order("created_at", { ascending: true });
+      .order("created_at", { ascending: false })
+      .limit(limit);
 
-    if (error) throw error;
+    if (before) {
+      q = q.lt("created_at", before);
+    }
 
-    res.json({ success: true, data: messages });
+    const { data: messages, error } = await q;
+    if (error) {
+      console.error("[Chat] Fetch messages error:", error.message);
+      throw error;
+    }
+
+    // Return in ascending order for display, but we fetched desc for cursor
+    const ordered = (messages || []).reverse();
+    const hasMore = (messages || []).length === limit;
+    const nextCursor = hasMore ? (ordered[0]?.created_at || null) : null;
+
+    res.json({ success: true, data: ordered, hasMore, nextCursor });
   } catch (error) {
+    console.error("[Chat] Critical Fetch Messages Error:", error);
     next(error);
   }
 };
@@ -80,13 +102,20 @@ exports.sendMessage = async (req, res, next) => {
     const { id: currentUserId } = req.user;
     const { receiver_id, content } = req.body;
 
+    if (!receiver_id || !content) {
+      return res.status(400).json({ success: false, error: "Missing receiver_id or content" });
+    }
+
     const { data: message, error } = await supabase
       .from("messages")
-      .insert([{ sender_id: currentUserId, receiver_id, content, is_read: false }])
+      .insert([{ sender_id: currentUserId, receiver_id, content: content.trim(), is_read: false }])
       .select("*")
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error("[Chat] Send error:", error.message);
+      throw error;
+    }
 
     // Broadcast via WebSocket to sender and receiver
     broadcastRealtime({
@@ -96,6 +125,7 @@ exports.sendMessage = async (req, res, next) => {
 
     res.status(201).json({ success: true, data: message });
   } catch (error) {
+    console.error("[Chat] Critical Send Error:", error);
     next(error);
   }
 };

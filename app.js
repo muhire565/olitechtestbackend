@@ -49,6 +49,36 @@ app.use("/api/expenses", auth, expensesRoutes);
 app.use("/api/payment-notifications", auth, paymentNotificationsRoutes);
 app.use("/api/chat", auth, chatRoutes);
 
+// ─── SSE Fallback Endpoint ────────────────────────────────────────────────────
+// Clients that cannot establish a WebSocket connection (corporate proxies/firewalls)
+// fall back to this SSE stream. All events from broadcastRealtime() are mirrored here.
+app.get("/api/stream", auth, (req, res) => {
+  const { addSSEClient, removeSSEClient } = require("./src/realtime");
+
+  res.set({
+    "Content-Type":  "text/event-stream",
+    "Cache-Control": "no-cache",
+    "Connection":    "keep-alive",
+    "X-Accel-Buffering": "no", // Disable Nginx buffering
+  });
+  res.flushHeaders();
+
+  // Send connected confirmation
+  res.write(`event: connected\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
+
+  addSSEClient(res);
+
+  // 25-second heartbeat to keep the connection alive through proxies
+  const heartbeat = setInterval(() => {
+    try { res.write(`:heartbeat\n\n`); } catch (_) {}
+  }, 25_000);
+
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    removeSSEClient(res);
+  });
+});
+
 app.use((req, res) => res.status(404).json({ success: false, error: "Not found", code: 404 }));
 app.use(errorHandler);
 

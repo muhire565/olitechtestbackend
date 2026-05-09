@@ -37,7 +37,13 @@ const create = async (req, res, next) => {
       user_metadata: { username: normalizedUsername },
     });
     if (ae) throw fail(ae.message);
-    const { data, error } = await supabase.from("profiles").insert([{ id: au.user.id, full_name, role }]).select().single();
+    const { data, error } = await supabase.from("profiles").insert([{ 
+      id: au.user.id, 
+      full_name, 
+      username: normalizedUsername,
+      email: finalEmail,
+      role 
+    }]).select().single();
     if (error) throw fail(error.message);
     await auditLogger({ user_id: req.user.id, action: "CREATE_USER", entity_type: "profiles", entity_id: data.id, details: data, ip_address: req.ip });
     return ok(res, data, "User created");

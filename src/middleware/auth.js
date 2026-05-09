@@ -1,109 +1,112 @@
 const { supabase } = require("../config/supabase");
 
-// Performance optimization: Cache authenticated users to avoid hitting Supabase API on every single request
 const sessionCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 const authMiddleware = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization || "";
-    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+    // SSE clients (EventSource) cannot send custom headers, so they pass the
+    // token as ?_token=... query param as a fallback.
+    const token = authHeader.startsWith("Bearer ")
+      ? authHeader.slice(7)
+      : (req.query._token ? String(req.query._token) : null);
 
     if (!token) {
       return res.status(401).json({ success: false, error: "Unauthorized", code: 401 });
     }
 
-    // 1. Check local cache for basic auth (userData)
-    let userData = null;
+    // 1. Aggressive Cache Check (Token + Profile)
     const cached = sessionCache.get(token);
-    
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-      userData = cached.userData;
-    } else {
-      // 2. Not in cache or expired -> Verify with Supabase Auth
-      const { data: authData, error: userErr } = await supabase.auth.getUser(token);
-      if (userErr || !authData?.user) {
-        console.error(`[Auth] Token validation failed:`, userErr?.message);
-        return res.status(401).json({ success: false, error: "Invalid token", code: 401 });
-      }
-      userData = authData.user;
-      // Update cache for Auth part only
-      sessionCache.set(token, { userData, timestamp: Date.now() });
+      req.user = cached.userPayload;
+      return next();
     }
 
-    // 3. ALWAYS fetch profile from DB in real-time
-    const { data: profile, error: profileErr } = await supabase
-      .from("profiles")
-      .select("id, full_name, role, is_active, is_blocked, force_logout_at")
-      .eq("id", userData.id)
-      .single();
+    // 2. Resilient Identity Verification (with Retries)
+    let attempts = 3;
+    let authData = null;
+    let profile = null;
+    let lastError = null;
 
-    if (profileErr || !profile || !profile.is_active) {
-      return res.status(403).json({ success: false, error: "User inactive or missing profile", code: 403 });
-    }
-
-    // 4. Check for Blocked status
-    if (profile.is_blocked) {
-      sessionCache.delete(token);
-      return res.status(403).json({ success: false, error: "Contact OlitechHub admin for Assistance", code: 403, blocked: true });
-    }
-
-    // 5. Check for Force Logout (Token Revocation)
-    if (profile.force_logout_at) {
+    while (attempts > 0) {
       try {
-        const payloadBase64 = token.split('.')[1];
-        const payload = JSON.parse(Buffer.from(payloadBase64, 'base64').toString());
-        
-        // Issued At (iat) is in seconds, convert to milliseconds
-        const issuedAtMs = payload.iat * 1000;
-        const revokedAtMs = new Date(profile.force_logout_at).getTime();
+        // Step A: Verify JWT with Supabase Auth
+        const { data: aData, error: aErr } = await supabase.auth.getUser(token);
+        if (aErr) throw aErr;
+        authData = aData;
 
-        // If the token was issued BEFORE the last forced logout, it is invalid
-        // We add a 1-second grace buffer for clock skew
-        if (issuedAtMs < revokedAtMs - 1000) {
-          console.warn(`[Auth] Rejecting revoked token for ${profile.full_name}. Issued: ${new Date(issuedAtMs).toISOString()}, Revoked: ${new Date(revokedAtMs).toISOString()}`);
-          sessionCache.delete(token);
-          return res.status(401).json({ success: false, error: "Session expired. Please login again.", code: 401 });
+        // Step B: Fetch Profile from DB
+        const { data: pData, error: pErr } = await supabase
+          .from("profiles")
+          .select("id, full_name, role, is_active, is_blocked, force_logout_at")
+          .eq("id", authData.user.id)
+          .single();
+        
+        if (pErr) throw pErr;
+        profile = pData;
+
+        break; // Success!
+
+      } catch (err) {
+        lastError = err;
+        const isNetworkError = err.message?.includes("fetch failed") || err.message?.includes("timeout") || err.code === 'UND_ERR_CONNECT_TIMEOUT';
+        
+        if (isNetworkError && attempts > 1) {
+          attempts--;
+          console.warn(`[Auth] Connection timeout. Retrying identity check... (${attempts} left)`);
+          await new Promise(r => setTimeout(r, 1000));
+        } else {
+          // Hard error or exhausted retries
+          if (isNetworkError) {
+            return res.status(503).json({ 
+              success: false, 
+              error: "Security check timed out (Supabase). Please refresh.", 
+              code: 503 
+            });
+          }
+          return res.status(401).json({ success: false, error: "Session invalid or profile missing", code: 401 });
         }
-      } catch (e) {
-        console.error("[Auth] JWT decode error:", e);
       }
     }
 
-    // Update last seen (fire and forget)
-    supabase.from("profiles").update({ last_seen_at: new Date().toISOString() }).eq("id", profile.id).then(()=>{});
+    // 3. Validation Logic (Blocked/Inactive)
+    if (!profile.is_active || profile.is_blocked) {
+      return res.status(403).json({ 
+        success: false, 
+        error: profile.is_blocked ? "Account blocked. Contact admin." : "Account inactive", 
+        code: 403,
+        blocked: profile.is_blocked 
+      });
+    }
 
+    // 4. Token Revocation Check (force_logout_at)
+    if (profile.force_logout_at) {
+      const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+      if (payload.iat * 1000 < new Date(profile.force_logout_at).getTime() - 1000) {
+        return res.status(401).json({ success: false, error: "Session revoked", code: 401 });
+      }
+    }
+
+    // 5. Construct Payload and Cache results
     const userPayload = {
-      id: userData.id,
-      email: userData.email,
-      username: userData.user_metadata?.username || userData.email,
+      id: authData.user.id,
+      email: authData.user.email,
+      username: authData.user.user_metadata?.username || authData.user.email,
       role: profile.role,
       full_name: profile.full_name,
       token,
     };
 
-    // 4. Update cache
-    sessionCache.set(token, { userData, timestamp: Date.now() });
+    sessionCache.set(token, { userPayload, timestamp: Date.now() });
     
-    // Periodically clean up old cache entries
-    if (sessionCache.size > 1000) {
-      const now = Date.now();
-      for (const [key, value] of sessionCache.entries()) {
-        if (now - value.timestamp > CACHE_TTL) sessionCache.delete(key);
-      }
-    }
+    // Update last seen (background - no await)
+    supabase.from("profiles").update({ last_seen_at: new Date().toISOString() }).eq("id", profile.id).then(()=>{});
 
     req.user = userPayload;
     next();
   } catch (error) {
-    // Handle Supabase/Networking timeout specifically
-    if (error.code === 'UND_ERR_CONNECT_TIMEOUT' || error.message?.includes('timeout')) {
-      return res.status(503).json({ 
-        success: false, 
-        error: "Security validation timeout (Supabase). Please try again in a moment.", 
-        code: 503 
-      });
-    }
+    console.error("[Auth] Critical Middleware Error:", error);
     next(error);
   }
 };

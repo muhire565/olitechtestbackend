@@ -3,16 +3,29 @@ const { ok, fail } = require("../../utils/http");
 
 const resolveLoginEmail = async (identifier) => {
   const normalized = String(identifier || "").trim().toLowerCase();
-  if (!normalized) throw fail("Username is required.", 400);
+  if (!normalized) throw fail("Username or email is required.", 400);
   if (normalized.includes("@")) return normalized;
 
-  // Username login without schema changes: resolve against Supabase Auth metadata.
-  const { data, error } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
-  if (error) throw fail(error.message || "Could not resolve username.", 400);
-  const users = data?.users || [];
-  const match = users.find((u) => String(u.user_metadata?.username || "").trim().toLowerCase() === normalized);
-  if (!match?.email) throw fail("Invalid credentials", 401);
-  return match.email;
+  // 1. Try searching profiles table (preferred/fastest)
+  const { data: profile, error } = await supabase
+    .from("profiles")
+    .select("email")
+    .eq("username", normalized)
+    .maybeSingle();
+
+  if (profile?.email) return profile.email;
+
+  // 2. Fallback: Search auth.users metadata (slower, but works if profiles columns are missing)
+  const { data: { users }, error: listError } = await supabase.auth.admin.listUsers();
+  if (!listError && users) {
+    const matchedUser = users.find(u => 
+      u.user_metadata?.username?.toLowerCase() === normalized ||
+      u.email?.split('@')[0].toLowerCase() === normalized
+    );
+    if (matchedUser?.email) return matchedUser.email;
+  }
+
+  throw fail("Invalid credentials", 401);
 };
 
 const login = async (req, res, next) => {

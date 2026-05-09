@@ -182,12 +182,13 @@ const createSale = async (req, res, next) => {
     }
 
     broadcastRealtime({
-      type: "sales_updated",
-      event: "sale_created",
+      type: "sale:new",
       sale_id: sale.id,
       cashier_id,
       total_amount: netTotal,
+      event: "sale_created",
     });
+    broadcastRealtime({ type: "dashboard:refresh" });
 
     return ok(res, { sale, items: fullItems, payments: fullPayments, receipt, change_due });
   } catch (e) { next(e); }
@@ -281,12 +282,13 @@ const voidSale = async (req, res, next) => {
 
     await auditLogger({ user_id: req.user.id, action: "VOID_SALE", entity_type: "sales", entity_id: sale.id, details: { reason: req.body.void_reason }, ip_address: req.ip });
     broadcastRealtime({
-      type: "sales_updated",
-      event: "sale_voided",
+      type: "sale:new",
       sale_id: sale.id,
       cashier_id: sale.cashier_id,
       total_amount: Number(sale.total_amount || 0),
+      event: "sale_voided",
     });
+    broadcastRealtime({ type: "dashboard:refresh" });
     return ok(res, updated);
   } catch (e) { next(e); }
 };

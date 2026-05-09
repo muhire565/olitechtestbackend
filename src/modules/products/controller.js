@@ -59,8 +59,8 @@ const create = async (req, res, next) => {
       throw fail(msg);
     }
     await supabase.from("inventory").insert([{ product_id: data.id, quantity_in_stock: Number(initial_stock || 0) }]);
-    broadcastRealtime({ type: "inventory_updated", event: "product_created", product_id: data.id });
-    broadcastRealtime({ type: "dashboard_refresh" });
+    broadcastRealtime({ type: "product:updated", product_id: data.id, event: "created" });
+    broadcastRealtime({ type: "inventory:update", product_id: data.id });
     return ok(res, data);
   } catch (e) { next(e); }
 };
@@ -86,8 +86,8 @@ const update = async (req, res, next) => {
       throw fail(msg);
     }
     if (!data) throw fail("Product not found", 404);
-    broadcastRealtime({ type: "inventory_updated", event: "product_updated", product_id: data.id });
-    broadcastRealtime({ type: "dashboard_refresh" });
+    broadcastRealtime({ type: "product:updated", product_id: data.id, event: "updated" });
+    broadcastRealtime({ type: "inventory:update", product_id: data.id });
     return ok(res, data, "Product updated successfully");
   } catch (e) {
     next(e);
