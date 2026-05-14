@@ -53,12 +53,15 @@ const create = async (req, res, next) => {
       low_stock_threshold: Number(req.body.low_stock_threshold ?? s.default_low_stock_threshold),
     });
 
-    // Remove barcode if it's empty or not provided to avoid unique constraint issues if it's optional in DB
-    if (!payload.barcode) delete payload.barcode;
+    // Handle empty or missing barcodes by setting them to null to satisfy DB constraints
+    if (!payload.barcode || String(payload.barcode).trim() === "") {
+      payload.barcode = null;
+    }
 
     const { data, error } = await supabase.from("products").insert([payload]).select().single();
     if (error) {
       const msg = String(error.message || "");
+      if (msg.includes("products_barcode_key")) throw fail("A product with this internal ID already exists.");
       if (msg.includes("products_package_size_check")) throw fail("Package size must be greater than 1 for packaged products.");
       throw fail(msg);
     }

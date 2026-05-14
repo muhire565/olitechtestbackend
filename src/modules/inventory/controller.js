@@ -40,7 +40,9 @@ const list = async (req, res, next) => {
         products: {
           name: p.name,
           barcode: p.barcode,
-          low_stock_threshold: p.low_stock_threshold
+          low_stock_threshold: p.low_stock_threshold,
+          is_package: p.is_package,
+          package_size: p.package_size
         }
       };
     });
