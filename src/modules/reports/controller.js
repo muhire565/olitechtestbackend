@@ -335,13 +335,11 @@ const productSales = async (req, res, next) => {
   } catch (e) { next(e); }
 };
 const stockUnitCost = (p) => {
-  if (p.is_package) {
-    const pkg = Number(p.package_buying_price || 0);
-    if (pkg > 0) return pkg;
-    const size = Number(p.package_size || 0);
-    const unit = Number(p.buying_price || 0);
-    if (size > 0 && unit > 0) return size * unit;
+  // If we have a specific package buying price, we should derive the piece price from it
+  if (p.is_package && Number(p.package_buying_price || 0) > 0 && Number(p.package_size || 0) > 0) {
+    return Number(p.package_buying_price) / Number(p.package_size);
   }
+  // Otherwise use the individual piece buying price
   return Number(p.buying_price || 0);
 };
 
