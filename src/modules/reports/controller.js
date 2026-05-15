@@ -515,7 +515,7 @@ const dashboardSummary = async (req, res, next) => {
       })(),
       supabase
         .from("products")
-        .select("id, name, buying_price, is_package, package_size, package_buying_price, low_stock_threshold, is_active, inventory(quantity_in_stock)")
+        .select("id, name, buying_price, selling_price, is_package, package_size, package_buying_price, low_stock_threshold, is_active, inventory(quantity_in_stock)")
         .eq("is_active", true),
     ]);
 
@@ -568,16 +568,19 @@ const dashboardSummary = async (req, res, next) => {
       const qty = quantityFromInventoryEmbed(p.inventory);
       const unitCost = stockUnitCost(p);
       const value = Math.round(qty * unitCost);
+      const sellingPrice = Number(p.selling_price || 0);
       return {
         id: p.id,
         name: p.name,
         qty,
         unitCost,
-        value
+        value,
+        expected_revenue: qty * sellingPrice
       };
     });
 
     const totalStockValue = productsWithValues.reduce((acc, p) => acc + p.value, 0);
+    const totalExpectedRevenue = productsWithValues.reduce((acc, p) => acc + p.expected_revenue, 0);
 
     // Get top 5 items contributing to the value for debugging
     const topContributors = [...productsWithValues]
@@ -606,7 +609,8 @@ const dashboardSummary = async (req, res, next) => {
       expenses: expenseData,
       stock: { 
         total_value: Number(totalStockValue || 0),
-        top_contributors: topContributors // This will show us who the culprits are
+        total_expected_revenue: Number(totalExpectedRevenue || 0),
+        top_contributors: topContributors 
       },
       low_stock_count: lowCount,
       default_low_stock_threshold: defaultThreshold,
