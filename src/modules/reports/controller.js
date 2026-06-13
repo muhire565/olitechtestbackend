@@ -616,7 +616,6 @@ const dashboardSummary = async (req, res, next) => {
 
     // 1. Calculate cost for installments collected today
     let installmentsCostTotal = 0;
-    const installmentData = installmentRes.data || [];
     if (installmentData.length > 0) {
        // Get credit sale IDs
        const { data: creditSales } = await supabase
