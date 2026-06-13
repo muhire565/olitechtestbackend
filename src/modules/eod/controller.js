@@ -25,6 +25,19 @@ const expectedCashFor = async (cashier_id, date) => {
 
   const cash_sales = (cash || []).reduce((a, p) => a + Number(p.amount), 0);
 
+  // 2b. Get cash installments
+  const { data: installments, error: instErr } = await supabase
+    .from("credit_installments")
+    .select("amount")
+    .eq("payment_method", "CASH")
+    .eq("recorded_by", cashier_id)
+    .gte("created_at", dayStartIso(date))
+    .lte("created_at", dayEndIso(date));
+  if (instErr) throw fail(instErr.message);
+
+  const cash_installments = (installments || []).reduce((a, p) => a + Number(p.amount), 0);
+  const total_cash_collected = cash_sales + cash_installments;
+
   // 3. Get cash expenses
   const { data: expenses, error: expErr } = await supabase
     .from("expenses")
@@ -44,9 +57,9 @@ const expectedCashFor = async (cashier_id, date) => {
   if (savErr) throw fail(savErr.message);
   const boss_savings = (savings || []).reduce((a, s) => a + Number(s.amount), 0);
 
-  const expected_cash = opening_balance + cash_sales - cash_expenses - boss_savings;
+  const expected_cash = opening_balance + total_cash_collected - cash_expenses - boss_savings;
   
-  return { expected_cash, opening_balance, cash_sales, cash_expenses, boss_savings };
+  return { expected_cash, opening_balance, cash_sales: total_cash_collected, cash_expenses, boss_savings };
 };
 
 const setOpeningBalance = async (req, res, next) => {

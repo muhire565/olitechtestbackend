@@ -553,7 +553,7 @@ const dashboardSummary = async (req, res, next) => {
         .select("id, name, buying_price, selling_price, is_package, package_size, package_buying_price, package_selling_price, low_stock_threshold, is_active, inventory(quantity_in_stock)")
         .eq("is_active", true),
       (() => {
-        let q = supabase.from("credit_installments").select("amount, created_at");
+        let q = supabase.from("credit_installments").select("amount, created_at, payment_method, credit_sale_id");
         if (from && to) q = q.gte("created_at", `${from}T00:00:00Z`).lte("created_at", `${to}T23:59:59Z`);
         return q;
       })(),
@@ -592,9 +592,20 @@ const dashboardSummary = async (req, res, next) => {
       });
     });
 
-    // Add installments to appropriate payment methods if needed, 
-    // but for the dashboard we mainly care about total collections.
-    const installmentsTotal = (installmentRes.data || []).reduce((a, b) => a + Number(b.amount), 0);
+    // Process installments for payment methods
+    const installmentData = installmentRes.data || [];
+    const installmentsTotal = installmentData.reduce((a, b) => a + Number(b.amount), 0);
+
+    installmentData.forEach(inst => {
+      const method = inst.payment_method || "CASH";
+      const amount = Number(inst.amount) || 0;
+      
+      // Increase the specific payment method (CASH, MOMO_CODE, etc.)
+      paymentData[method] = (paymentData[method] || 0) + amount;
+      
+      // Decrease the CREDIT amount because it has been settled
+      paymentData.CREDIT = Math.max(0, (paymentData.CREDIT || 0) - amount);
+    });
     // Compute outstanding: use balance_remaining if set, otherwise fall back to total_amount - amount_paid
     const outstandingTotal = (outstandingRes.data || []).reduce((a, b) => {
       const balance = b.balance_remaining !== null && b.balance_remaining !== undefined
@@ -646,9 +657,9 @@ const dashboardSummary = async (req, res, next) => {
 
     const profitRows = profitRowsRes.data || [];
     
-    // REVENUE = All non-credit payments + all installments
+    // REVENUE = All non-credit payments + all installments (which are now already added to CASH, MOMO, etc.)
     // This ensures that "Credit" is NOT counted as revenue until money is actually received.
-    const actualRevenue = (paymentData.CASH + paymentData.MOMO_CODE + paymentData.PHONE_NUMBER + paymentData.POS) + installmentsTotal;
+    const actualRevenue = (paymentData.CASH + paymentData.MOMO_CODE + paymentData.PHONE_NUMBER + paymentData.POS);
     
     // Improved Cost of Goods calculation that accounts for packages AND payment attribution.
     // We only count the cost of the portion that was actually paid for today.
