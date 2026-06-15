@@ -592,19 +592,17 @@ const dashboardSummary = async (req, res, next) => {
       });
     });
 
-    // Process installments for payment methods
+    // Process installments: add to whatever payment method was used (CASH/MOMO/POS).
+    // CREDIT = total credit sold today — it only ever grows as new credit sales are made.
+    // Paying off an installment does NOT reduce today's credit; it adds to CASH.
     const installmentData = installmentRes.data || [];
     const installmentsTotal = installmentData.reduce((a, b) => a + Number(b.amount), 0);
 
     installmentData.forEach(inst => {
       const method = inst.payment_method || "CASH";
       const amount = Number(inst.amount) || 0;
-      
-      // Increase the specific payment method (CASH, MOMO_CODE, etc.)
+      // Add to the real payment method used (cash, momo, pos)
       paymentData[method] = (paymentData[method] || 0) + amount;
-      
-      // Decrease the CREDIT amount because it has been settled
-      paymentData.CREDIT = Math.max(0, (paymentData.CREDIT || 0) - amount);
     });
     // Compute outstanding: use balance_remaining if set, otherwise fall back to total_amount - amount_paid
     const outstandingTotal = (outstandingRes.data || []).reduce((a, b) => {

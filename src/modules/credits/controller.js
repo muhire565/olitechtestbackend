@@ -7,24 +7,29 @@ const list = async (req, res, next) => {
     const { search, status, page = 1, limit = 20 } = req.query;
     const from = (Number(page) - 1) * Number(limit);
     
+    console.log(`[Credits] GET /api/credits | user=${req.user?.id} | status=${status} | search="${search}" | page=${page}`);
+
     let q = supabase
       .from("credit_sales")
       .select("*, customers(*), sales(receipt_number)", { count: "exact" })
       .order("created_at", { ascending: false });
 
+    const trimmedSearch = (search || "").trim();
     if (status && status !== "all") {
       q = q.eq("status", status);
     }
 
-    if (search) {
-      q = q.or(`full_name.ilike.%${search}%,phone_number.ilike.%${search}%`, { foreignTable: "customers" });
+    if (trimmedSearch) {
+      q = q.or(`full_name.ilike.%${trimmedSearch}%,phone_number.ilike.%${trimmedSearch}%`, { foreignTable: "customers" });
     }
 
     const { data, count, error } = await q.range(from, from + Number(limit) - 1);
+    console.log(`[Credits] Query result: ${data?.length} records, count=${count}, error=${error?.message}`);
     if (error) throw fail(error.message);
     return paginated(res, data, Number(page), Number(limit), count);
   } catch (e) { next(e); }
 };
+
 
 const recordInstallment = async (req, res, next) => {
   try {
