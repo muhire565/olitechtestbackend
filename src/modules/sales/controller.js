@@ -40,6 +40,18 @@ const withFallbackSaleItemsFromMovements = async (salesRows) => {
   });
 };
 
+/** Human-readable product label for realtime activity feed (e.g. "Rice, Sugar" or "Oil +2 more"). */
+const formatSaleProductLabel = (saleItems) => {
+  const items = Array.isArray(saleItems) ? saleItems : [];
+  const names = items
+    .map((item) => item?.products?.name)
+    .filter(Boolean);
+  if (!names.length) return "Sale";
+  if (names.length === 1) return names[0];
+  if (names.length === 2) return `${names[0]}, ${names[1]}`;
+  return `${names[0]} +${names.length - 1} more`;
+};
+
 const createSale = async (req, res, next) => {
   try {
     const { cashier_id, print_receipt, items, payments, discount_amount = 0, customer_id } = req.body;
@@ -155,8 +167,13 @@ const createSale = async (req, res, next) => {
         status: "unpaid"
       }]);
       if (cErr) {
-        // Log error but don't fail the whole sale since sale is committed
-        console.error("Failed to create credit record:", cErr.message);
+        await Promise.all([
+          supabase.from("sale_items").delete().eq("sale_id", sale.id),
+          supabase.from("payments").delete().eq("sale_id", sale.id),
+          supabase.from("stock_movements").delete().eq("reference_id", sale.id),
+          supabase.from("sales").delete().eq("id", sale.id),
+        ]);
+        throw fail(`Failed to record credit sale: ${cErr.message}`);
       }
     }
 
@@ -206,13 +223,21 @@ const createSale = async (req, res, next) => {
       console.error("Receipt generation failed after sale create:", receiptErr?.message || receiptErr);
     }
 
+    const productLabel = formatSaleProductLabel(fullItems);
     broadcastRealtime({
       type: "sale:new",
+      id: sale.id,
       sale_id: sale.id,
+      receipt_number: sale.receipt_number,
+      product_names: productLabel,
       cashier_id,
       total_amount: netTotal,
       event: "sale_created",
     });
+    if (creditPayment) {
+      broadcastRealtime({ type: "credits:updated", event: "credit_sale", sale_id: sale.id, customer_id });
+      broadcastRealtime({ type: "customers:updated", event: "credit_sale", customer_id });
+    }
     broadcastRealtime({ type: "dashboard:refresh" });
 
     return ok(res, { sale, items: fullItems, payments: fullPayments, receipt, change_due });
@@ -281,7 +306,7 @@ const voidSale = async (req, res, next) => {
 
     const { data: items } = await supabase
       .from("sale_items")
-      .select("*, products(package_size)")
+      .select("*, products(name, package_size)")
       .eq("sale_id", sale.id);
 
     for (const item of items) {
@@ -308,7 +333,10 @@ const voidSale = async (req, res, next) => {
     await auditLogger({ user_id: req.user.id, action: "VOID_SALE", entity_type: "sales", entity_id: sale.id, details: { reason: req.body.void_reason }, ip_address: req.ip });
     broadcastRealtime({
       type: "sale:new",
+      id: sale.id,
       sale_id: sale.id,
+      receipt_number: sale.receipt_number,
+      product_names: formatSaleProductLabel(items),
       cashier_id: sale.cashier_id,
       total_amount: Number(sale.total_amount || 0),
       event: "sale_voided",

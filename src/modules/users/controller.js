@@ -2,23 +2,46 @@ const { supabase } = require("../../config/supabase");
 const { ok, paginated, fail } = require("../../utils/http");
 const { broadcastRealtime } = require("../../realtime");
 const { auditLogger } = require("../../utils/auditLogger");
+const { isValidPinFormat, hashPin } = require("../../utils/pin");
+
+const PROFILE_PUBLIC_COLUMNS = "id, full_name, username, role, is_active, is_blocked, blocked_at, blocked_by, last_seen_at, pin_hash, created_at, updated_at";
+
+const enrichProfilesWithAuthEmail = async (rows = []) => {
+  if (!rows.length) return rows;
+  const { data: { users }, error } = await supabase.auth.admin.listUsers({ perPage: 1000 });
+  if (error) throw fail(error.message);
+  const emailById = new Map((users || []).map((u) => [u.id, u.email]));
+  return rows.map(({ pin_hash, pin_lookup, ...row }) => ({
+    ...row,
+    email: emailById.get(row.id) || null,
+    pin_set: Boolean(pin_hash),
+  }));
+};
 
 const list = async (req, res, next) => {
   try {
     const page = Number(req.query.page || 1); const limit = Number(req.query.limit || 20); const from = (page - 1) * limit;
     const { data, count, error } = await supabase
       .from("profiles")
-      .select("*, last_seen_at, is_blocked, blocked_at, blocked_by", { count: "exact" })
+      .select(PROFILE_PUBLIC_COLUMNS, { count: "exact" })
       .range(from, from + limit - 1)
       .order("created_at", { ascending: false });
     if (error) throw fail(error.message);
-    return paginated(res, data, page, limit, count);
+    const safe = await enrichProfilesWithAuthEmail(data || []);
+    return paginated(res, safe, page, limit, count);
   } catch (e) { next(e); }
 };
-const getOne = async (req, res, next) => { try { const { data, error } = await supabase.from("profiles").select("*").eq("id", req.params.id).single(); if (error) throw fail(error.message, 404); return ok(res, data); } catch (e) { next(e); } };
+const getOne = async (req, res, next) => {
+  try {
+    const { data, error } = await supabase.from("profiles").select(PROFILE_PUBLIC_COLUMNS).eq("id", req.params.id).single();
+    if (error) throw fail(error.message, 404);
+    const [enriched] = await enrichProfilesWithAuthEmail([data]);
+    return ok(res, enriched);
+  } catch (e) { next(e); }
+};
 const create = async (req, res, next) => {
   try {
-    const { email, username, password, full_name, role } = req.body;
+    const { email, username, password, full_name, role, pin } = req.body;
     const actorRole = String(req.user?.role || "");
     if (actorRole === "owner" && role !== "cashier") {
       throw fail("Owners can only create cashier accounts.", 403);
@@ -37,14 +60,24 @@ const create = async (req, res, next) => {
       user_metadata: { username: normalizedUsername },
     });
     if (ae) throw fail(ae.message);
+
+    let pinFields = {};
+    if (pin) {
+      if (!isValidPinFormat(pin)) throw fail("PIN must be 4 to 6 digits.", 400);
+      pinFields = await hashPin(pin);
+    }
+
     const { data, error } = await supabase.from("profiles").insert([{ 
       id: au.user.id, 
       full_name, 
       username: normalizedUsername,
-      email: finalEmail,
-      role 
+      role,
+      ...pinFields,
     }]).select().single();
-    if (error) throw fail(error.message);
+    if (error) {
+      if (error.code === "23505" && pin) throw fail("This PIN is already in use. Choose a different PIN.", 409);
+      throw fail(error.message);
+    }
     await auditLogger({ user_id: req.user.id, action: "CREATE_USER", entity_type: "profiles", entity_id: data.id, details: data, ip_address: req.ip });
     return ok(res, data, "User created");
   } catch (e) { next(e); }
@@ -149,4 +182,103 @@ const forceLogout = async (req, res, next) => {
   } catch (e) { next(e); }
 };
 
-module.exports = { list, create, getOne, update, deactivate, resetPassword, block, unblock, forceLogout };
+const setPin = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const pin = String(req.body.pin || "").trim();
+    const actorRole = String(req.user?.role || "");
+
+    if (!isValidPinFormat(pin)) throw fail("PIN must be 4 to 6 digits.", 400);
+
+    const { data: target, error: targetError } = await supabase
+      .from("profiles")
+      .select("id, role, full_name")
+      .eq("id", id)
+      .single();
+
+    if (targetError || !target) throw fail("User not found.", 404);
+
+    if (actorRole === "owner") {
+      if (target.role !== "cashier") throw fail("Owners can only set PINs for cashier accounts.", 403);
+    } else if (actorRole !== "developer") {
+      throw fail("Forbidden: insufficient permissions", 403);
+    }
+
+    const { pin_hash, pin_lookup } = await hashPin(pin);
+
+    const { data: existing } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("pin_lookup", pin_lookup)
+      .neq("id", id)
+      .maybeSingle();
+
+    if (existing) throw fail("This PIN is already in use. Choose a different PIN.", 409);
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .update({ pin_hash, pin_lookup, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .select("id, full_name, role")
+      .single();
+
+    if (error) {
+      if (error.code === "23505") throw fail("This PIN is already in use. Choose a different PIN.", 409);
+      throw fail(error.message, 400);
+    }
+
+    await auditLogger({
+      user_id: req.user.id,
+      action: "SET_USER_PIN",
+      entity_type: "profiles",
+      entity_id: id,
+      details: { target_role: target.role },
+      ip_address: req.ip,
+    });
+
+    return ok(res, { user: data, pin_set: true }, "PIN updated");
+  } catch (e) { next(e); }
+};
+
+const clearPin = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const actorRole = String(req.user?.role || "");
+
+    const { data: target, error: targetError } = await supabase
+      .from("profiles")
+      .select("id, role, full_name")
+      .eq("id", id)
+      .single();
+
+    if (targetError || !target) throw fail("User not found.", 404);
+
+    if (actorRole === "owner") {
+      if (target.role !== "cashier") throw fail("Owners can only clear PINs for cashier accounts.", 403);
+    } else if (actorRole !== "developer") {
+      throw fail("Forbidden: insufficient permissions", 403);
+    }
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .update({ pin_hash: null, pin_lookup: null, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .select("id, full_name, role")
+      .single();
+
+    if (error) throw fail(error.message, 400);
+
+    await auditLogger({
+      user_id: req.user.id,
+      action: "CLEAR_USER_PIN",
+      entity_type: "profiles",
+      entity_id: id,
+      details: { target_role: target.role },
+      ip_address: req.ip,
+    });
+
+    return ok(res, { user: data, pin_set: false }, "PIN removed");
+  } catch (e) { next(e); }
+};
+
+module.exports = { list, create, getOne, update, deactivate, resetPassword, block, unblock, forceLogout, setPin, clearPin };

@@ -15,6 +15,7 @@ r.post(
     body("password").isLength({ min: 6 }),
     body("full_name").notEmpty(),
     body("role").isIn(["owner", "cashier", "developer"]),
+    body("pin").optional().matches(/^\d{4,6}$/).withMessage("PIN must be 4 to 6 digits"),
   ],
   (req, res, next) => {
     try { validate(req); } catch (e) { return next(e); }
@@ -37,5 +38,16 @@ r.patch("/:id/reset-password", allowRoles("developer"), [body("email").isEmail()
 r.post("/:id/block", allowRoles("developer"), c.block);
 r.post("/:id/unblock", allowRoles("developer"), c.unblock);
 r.post("/:id/force-logout", allowRoles("developer"), c.forceLogout);
+
+r.patch(
+  "/:id/pin",
+  allowRoles("developer", "owner"),
+  [body("pin").matches(/^\d{4,6}$/).withMessage("PIN must be 4 to 6 digits")],
+  (req, res, next) => {
+    try { validate(req); } catch (e) { return next(e); }
+    c.setPin(req, res, next);
+  }
+);
+r.delete("/:id/pin", allowRoles("developer", "owner"), c.clearPin);
 
 module.exports = r;

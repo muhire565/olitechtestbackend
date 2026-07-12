@@ -35,9 +35,15 @@ create table if not exists profiles (
   blocked_at timestamptz,
   blocked_by uuid references profiles(id),
   last_seen_at timestamptz,
+  pin_hash text,
+  pin_lookup text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+create unique index if not exists profiles_pin_lookup_unique
+  on profiles (pin_lookup)
+  where pin_lookup is not null;
 
 create table if not exists categories (
   id bigserial primary key,

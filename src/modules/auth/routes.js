@@ -7,7 +7,13 @@ const { listLoginLogs, deleteLoginLog, clearAllLoginLogs } = require("./loginLog
 
 const router = express.Router();
 
+const pinBodyValidator = body("pin")
+  .trim()
+  .matches(/^\d{4,6}$/)
+  .withMessage("PIN must be 4 to 6 digits");
+
 router.post("/login", [body("email").isLength({ min: 2 }), body("password").isLength({ min: 6 })], (req, res, next) => { try { validate(req); } catch (e) { return next(e); } controller.login(req, res, next); });
+router.post("/login-pin", [pinBodyValidator], (req, res, next) => { try { validate(req); } catch (e) { return next(e); } controller.loginPin(req, res, next); });
 router.post("/logout", controller.logout);
 router.post("/refresh", [body("refresh_token").notEmpty()], (req, res, next) => { try { validate(req); } catch (e) { return next(e); } controller.refresh(req, res, next); });
 router.get("/me", auth, controller.me);
@@ -22,6 +28,27 @@ router.patch(
   (req, res, next) => {
     try { validate(req); } catch (e) { return next(e); }
     controller.updateCredentials(req, res, next);
+  }
+);
+router.patch(
+  "/pin",
+  auth,
+  [
+    body("current_password").isLength({ min: 6 }),
+    pinBodyValidator,
+  ],
+  (req, res, next) => {
+    try { validate(req); } catch (e) { return next(e); }
+    controller.setOwnPin(req, res, next);
+  }
+);
+router.delete(
+  "/pin",
+  auth,
+  [body("current_password").isLength({ min: 6 })],
+  (req, res, next) => {
+    try { validate(req); } catch (e) { return next(e); }
+    controller.clearOwnPin(req, res, next);
   }
 );
 
